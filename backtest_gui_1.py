@@ -44,12 +44,14 @@ class BacktestGUI(tk.Tk):
         self.initial_var = tk.StringVar(value="300000000")
         self.rf_var = tk.StringVar(value="0")
         self.rebalance_var = tk.StringVar(value="Monthly")
-        self.benchmark_var = tk.StringVar(value="069500.KS")
-
+        # 벤치마크 선택을 위한 매핑 정보
+        self.benchmark_options = {"KOSPI 200": "069500.KS", "S&P 500": "SPY"}
+        self.benchmark_display_var = tk.StringVar(value="KOSPI 200")
+        
         self.sort_column = None
         self.sort_reverse = False
         self.drag_data = {"port": None, "iid": None}
-
+        
         self._apply_styles()
         self._build_ui()
 
@@ -177,13 +179,15 @@ class BacktestGUI(tk.Tk):
         ttk.Label(c3, text="백테스트 환경 설정", style="Header.TLabel").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 10))
         
         labels = ["시작일", "초기금액", "무위험수익률", "리밸런싱", "벤치마크"]
-        vars = [self.start_var, self.initial_var, self.rf_var, self.rebalance_var, self.benchmark_var]
+        vars = [self.start_var, self.initial_var, self.rf_var, self.rebalance_var, self.benchmark_display_var]
         
         for i, (l, v) in enumerate(zip(labels, vars)):
             r, c = divmod(i, 3)
             ttk.Label(c3, text=l, style="CardLabel.TLabel").grid(row=r+1, column=c*2, sticky="w", padx=(10 if c>0 else 0, 5), pady=5)
             if l == "리밸런싱":
                 ttk.Combobox(c3, textvariable=v, values=["Monthly", "Quarterly", "Yearly", "None"], state="readonly", width=12).grid(row=r+1, column=c*2+1, sticky="ew")
+            elif l == "벤치마크":
+                ttk.Combobox(c3, textvariable=v, values=list(self.benchmark_options.keys()), state="readonly", width=12).grid(row=r+1, column=c*2+1, sticky="ew")
             else:
                 ttk.Entry(c3, textvariable=v, width=15).grid(row=r+1, column=c*2+1, sticky="ew")
 
@@ -352,7 +356,7 @@ class BacktestGUI(tk.Tk):
     def _save_config(self):
         config = {
             "start": self.start_var.get(), "initial": self.initial_var.get(), "rf": self.rf_var.get(),
-            "rebalance": self.rebalance_var.get(), "benchmark": self.benchmark_var.get(),
+            "rebalance": self.rebalance_var.get(), "benchmark": self.benchmark_display_var.get(),
             "port_a": {t: v.get() for t, v in self.weight_entries_a.items()},
             "port_b": {t: v.get() for t, v in self.weight_entries_b.items()}
         }
@@ -369,7 +373,14 @@ class BacktestGUI(tk.Tk):
             self.start_var.set(cfg.get("start", "2018-01-01"))
             self.initial_var.set(cfg.get("initial", "300000000"))
             self.rf_var.set(cfg.get("rf", "0")); self.rebalance_var.set(cfg.get("rebalance", "Monthly"))
-            self.benchmark_var.set(cfg.get("benchmark", "069500.KS"))
+            
+            # 벤치마크 설정 불러오기 (호환성 유지)
+            bench = cfg.get("benchmark", "KOSPI 200")
+            if bench in self.benchmark_options:
+                self.benchmark_display_var.set(bench)
+            else:
+                self.benchmark_display_var.set("KOSPI 200")
+
             self.port_a = list(cfg.get("port_a", {}).keys())
             self.port_b = list(cfg.get("port_b", {}).keys())
             self._refresh_port_trees()
@@ -407,7 +418,9 @@ class BacktestGUI(tk.Tk):
         if self.sub_var.get() != "전체": df = df[df['sub'] == self.sub_var.get()]
         if self.group_var.get() != "전체": df = df[df['group'] == self.group_var.get()]
         s = self.search_var.get().strip().lower()
-        if s: df = df[df['ticker'].astype(str).str.lower().str.contains(s) | df['name'].astype(str).str.lower().str.contains(s)]
+        if s: 
+            # 티커 제외, 종목명(name)에서만 검색
+            df = df[df['name'].astype(str).str.lower().str.contains(s)]
         
         for i in self.names_tree.get_children(): self.names_tree.delete(i)
         for _, r in df.iterrows():
@@ -437,12 +450,18 @@ class BacktestGUI(tk.Tk):
 
     def _remove_selected_from_port(self, which):
         tree = self.port_a_tree if which == "A" else self.port_b_tree
-        sel = tree.selection()
-        if sel:
-            ticker = tree.item(sel[0])['values'][0]
-            target = self.port_a if which == "A" else self.port_b
-            if ticker in target: target.remove(ticker)
-            self._refresh_port_trees()
+        target = self.port_a if which == "A" else self.port_b
+        
+        selected_items = tree.selection()
+        if not selected_items:
+            return
+
+        for item in selected_items:
+            ticker = str(tree.item(item)['values'][0])
+            if ticker in target:
+                target.remove(ticker)
+        
+        self._refresh_port_trees()
 
     def _apply_equal_weights(self, which):
         ents = self.weight_entries_a if which=="A" else self.weight_entries_b
@@ -459,18 +478,65 @@ class BacktestGUI(tk.Tk):
                 if s <= 0: raise ValueError("비중 오류")
                 return {t: v/s for t, v in res.items()}
             
+            # 벤치마크 표시 이름을 티커로 변환
+            bench_ticker = self.benchmark_options.get(self.benchmark_display_var.get(), "069500.KS")
+            
             result = backtest.run_backtest(
                 backtest.build_df_weights(self.df_master, get_w(self.weight_entries_a), get_w(self.weight_entries_b)),
                 start=self.start_var.get(), initial_investment=int(self.initial_var.get()),
                 rf=float(self.rf_var.get()), rebalance=self.rebalance_var.get(),
-                benchmark_ticker=self.benchmark_var.get(), show_plots=False, verbose=False
+                benchmark_ticker=bench_ticker, show_plots=False, verbose=False
             )
             self._open_results(result)
         except Exception as e: messagebox.showerror("오류", str(e))
 
     def _open_results(self, result):
-        win = tk.Toplevel(self); win.title("Backtest Result"); win.geometry("1150x850"); win.configure(bg=COLOR_BG)
-        nb = ttk.Notebook(win); nb.pack(fill="both", expand=True, padx=20, pady=20)
+        win = tk.Toplevel(self); win.title("Backtest Result"); win.geometry("1200x900"); win.configure(bg=COLOR_BG)
+        
+        # --- Top Action Bar ---
+        top_bar = ttk.Frame(win, padding=(20, 15, 20, 0))
+        top_bar.pack(fill="x")
+        
+        ttk.Label(top_bar, text="Backtest Performance Report", font=FONT_TITLE).pack(side="left")
+        
+        def export_excel():
+            path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")])
+            if not path: return
+            try:
+                import io
+                img_data = io.BytesIO()
+                self.current_fig.savefig(img_data, format='png', dpi=100)
+                img_data.seek(0)
+
+                with pd.ExcelWriter(path, engine='xlsxwriter') as writer:
+                    result['metrics_compare'].to_excel(writer, sheet_name='Performance_Summary')
+                    result['df_weights'].to_excel(writer, sheet_name='Portfolio_Weights', index=False)
+                    result['monthly_matrix_a'].to_excel(writer, sheet_name='Monthly_Returns_A')
+                    result['monthly_matrix_b'].to_excel(writer, sheet_name='Monthly_Returns_B')
+                    
+                    # 자산 상관관계 데이터 추가
+                    if not result['asset_corr_a'].empty:
+                        result['asset_corr_a'].to_excel(writer, sheet_name='Asset_Corr_A')
+                    if not result['asset_corr_b'].empty:
+                        result['asset_corr_b'].to_excel(writer, sheet_name='Asset_Corr_B')
+
+                    pd.DataFrame({
+                        'Port_A': result['asset_values_a'],
+                        'Port_B': result['asset_values_b'],
+                        'Benchmark': result['asset_values_bench']
+                    }).to_excel(writer, sheet_name='Equity_Curve_Data')
+                    
+                    workbook = writer.book
+                    chart_sheet = workbook.add_worksheet('Analysis_Charts')
+                    chart_sheet.insert_image('B2', 'backtest_charts.png', {'image_data': img_data})
+                
+                messagebox.showinfo("완료", "자산 상관관계를 포함한 전체 보고서가 저장되었습니다.")
+            except Exception as e:
+                messagebox.showerror("오류", str(e))
+
+        ttk.Button(top_bar, text="📥 전체 결과 보고서(엑셀) 내보내기", style="Success.TButton", command=export_excel).pack(side="right")
+
+        nb = ttk.Notebook(win); nb.pack(fill="both", expand=True, padx=20, pady=(10, 20))
 
         # Tab 1: Stats
         t1 = ttk.Frame(nb, padding=15); nb.add(t1, text="Performance Stats")
@@ -479,34 +545,92 @@ class BacktestGUI(tk.Tk):
         tree.pack(fill="both", expand=True)
         for idx, row in result["metrics_compare"].iterrows():
             tree.insert("", "end", values=(idx, row.get("Port A", "-"), row.get("Port B", "-"), row.get("Benchmark", "-")))
-        ttk.Label(t1, text=f"Correlation (A vs B): {result.get('correlation_ab', 0):.3f}", font=FONT_TITLE).pack(pady=15)
 
-        # Tab 2: Monthly Matrix
-        t2 = ttk.Frame(nb, padding=15); nb.add(t2, text="Monthly Returns (A)")
-        m_tree = ttk.Treeview(t2, columns=["Year"] + [f"{m}M" for m in range(1,13)], show="headings")
-        m_tree.heading("Year", text="Year"); m_tree.column("Year", width=70)
-        for m in range(1,13): m_tree.heading(f"{m}M", text=f"{m}M"); m_tree.column(f"{m}M", width=70, anchor="center")
-        m_tree.pack(fill="both", expand=True)
-        for year in result['monthly_matrix_a'].index:
-            vals = [year] + [f"{v:.1f}%" if pd.notna(v) else "-" for v in result['monthly_matrix_a'].loc[year]]
-            m_tree.insert("", "end", values=vals)
+        # Tab 2: Monthly Returns Heatmap (Combined A & B)
+        t_monthly = ttk.Frame(nb, padding=15); nb.add(t_monthly, text="Monthly Returns")
+        fig_m = Figure(figsize=(12, 6))
+        axs_m = fig_m.subplots(1, 2)
+        
+        def draw_monthly_heatmap(ax, df, title):
+            if df.empty:
+                ax.text(0.5, 0.5, "No Data", ha='center', va='center')
+                return
+            im = ax.imshow(df.values, cmap='RdYlGn', vmin=-5, vmax=5, aspect='auto')
+            ax.set_title(title, fontweight='bold')
+            ax.set_xticks(np.arange(len(df.columns))); ax.set_yticks(np.arange(len(df.index)))
+            ax.set_xticklabels([f"{m}M" for m in df.columns], fontsize=8)
+            ax.set_yticklabels(df.index, fontsize=8)
+            # 수치 표시
+            for i in range(len(df.index)):
+                for j in range(len(df.columns)):
+                    val = df.iloc[i, j]
+                    if pd.notna(val):
+                        ax.text(j, i, f"{val:.1f}", ha="center", va="center", color="black", fontsize=7)
+            fig_m.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-        # Tab 3: Charts
+        draw_monthly_heatmap(axs_m[0], result['monthly_matrix_a'], "Port A: Monthly Returns (%)")
+        draw_monthly_heatmap(axs_m[1], result['monthly_matrix_b'], "Port B: Monthly Returns (%)")
+        fig_m.tight_layout()
+        canvas_m = FigureCanvasTkAgg(fig_m, master=t_monthly); canvas_m.draw()
+        canvas_m.get_tk_widget().pack(fill="both", expand=True)
+
+        # Tab 3: Asset Correlation Analysis
+        t_corr = ttk.Frame(nb, padding=15); nb.add(t_corr, text="Asset Correlation")
+        fig_corr = Figure(figsize=(10, 5))
+        axs_corr = fig_corr.subplots(1, 2)
+        
+        def draw_heatmap(ax, df, title):
+            if df.empty:
+                ax.text(0.5, 0.5, "No Data", ha='center', va='center')
+                return
+            im = ax.imshow(df.values, cmap='RdYlGn', vmin=-1, vmax=1)
+            ax.set_title(title, fontweight='bold')
+            ax.set_xticks(np.arange(len(df.columns))); ax.set_yticks(np.arange(len(df.index)))
+            # 레이블을 종목명으로 표시 (이미 backtest.py에서 처리됨)
+            ax.set_xticklabels(df.columns, rotation=45, ha='right', fontsize=7)
+            ax.set_yticklabels(df.index, fontsize=7)
+            # 상관계수 숫자 표시
+            for i in range(len(df.index)):
+                for j in range(len(df.columns)):
+                    ax.text(j, i, f"{df.iloc[i, j]:.2f}", ha="center", va="center", color="black", fontsize=7)
+            fig_corr.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        draw_heatmap(axs_corr[0], result['asset_corr_a'], "Port A: Asset Correlation")
+        draw_heatmap(axs_corr[1], result['asset_corr_b'], "Port B: Asset Correlation")
+        fig_corr.tight_layout()
+        canvas_corr = FigureCanvasTkAgg(fig_corr, master=t_corr); canvas_corr.draw()
+        canvas_corr.get_tk_widget().pack(fill="both", expand=True)
+
+        # Tab 5: Charts
         t3 = ttk.Frame(nb, padding=10); nb.add(t3, text="Analysis Charts")
         fig = Figure(figsize=(10, 10)); axs = fig.subplots(3, 1)
+        self.current_fig = fig  # 엑셀 저장을 위해 참조 저장
+        
+        # Cumulative Equity Curve (기존 코드와 동일)
         axs[0].plot(result["asset_values_a"], label="Port A", color=COLOR_ACCENT, lw=2)
         axs[0].plot(result["asset_values_b"], label="Port B", color="#E67E22", lw=2)
         axs[0].plot(result["asset_values_bench"], label="Benchmark", ls="--", color="gray")
-        axs[0].set_title("Cumulative Equity Curve", fontsize=11, fontweight='bold'); axs[0].legend(); axs[0].grid(True, ls=":")
+        axs[0].set_title("Cumulative Equity Curve", fontsize=11, fontweight='bold')
+        axs[0].legend(); axs[0].grid(True, ls=":")
+        axs[0].set_yscale('linear')
+        from matplotlib.ticker import FuncFormatter
+        axs[0].yaxis.set_major_formatter(FuncFormatter(lambda x, p: format(int(x), ',')))
         
+        # 12M Rolling Returns
         axs[1].plot(result['rolling_12m_a'], label="Port A 1Y Rolling", color=COLOR_ACCENT)
         axs[1].plot(result['rolling_12m_b'], label="Port B 1Y Rolling", color="#E67E22")
-        axs[1].axhline(0, color="black", lw=1); axs[1].set_title("12M Rolling Returns (%)", fontsize=11, fontweight='bold'); axs[1].legend(); axs[1].grid(True, ls=":")
+        axs[1].axhline(0, color="black", lw=1)
+        axs[1].set_title("12M Rolling Returns (%)", fontsize=11, fontweight='bold')
+        axs[1].legend(); axs[1].grid(True, ls=":")
+        axs[1].set_yscale('linear')
         
+        # Drawdown
         axs[2].fill_between(result["drawdown_a"].index, result["drawdown_a"], color=COLOR_ACCENT, alpha=0.2)
         axs[2].plot(result["drawdown_a"], color=COLOR_ACCENT, label="Port A DD")
         axs[2].plot(result["drawdown_b"], color="#E67E22", label="Port B DD")
-        axs[2].set_title("Drawdown (%)", fontsize=11, fontweight='bold'); axs[2].grid(True, ls=":"); axs[2].legend()
+        axs[2].set_title("Drawdown (%)", fontsize=11, fontweight='bold')
+        axs[2].grid(True, ls=":"); axs[2].legend()
+        axs[2].set_yscale('linear')
         
         fig.tight_layout(); canvas = FigureCanvasTkAgg(fig, master=t3); canvas.draw(); canvas.get_tk_widget().pack(fill="both", expand=True)
 
