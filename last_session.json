@@ -1,0 +1,14 @@
+{
+    "start": "2005-01-01",
+    "initial": "300000000",
+    "contrib": "0",
+    "bench": "069500.KS",
+    "reb": "Yearly",
+    "cur": "KRW",
+    "port_a": {
+        "SPY": 1.0
+    },
+    "port_b": {
+        "VTI": 1.0
+    }
+}

@@ -28,14 +28,15 @@ FONT_TITLE = ("Segoe UI", 12, "bold")
 class ProBacktestGUI(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("K-Global 하이브리드 자산배분 시뮬레이터 v1.4")
+        self.title("K-Global 하이브리드 자산배분 시뮬레이터 v1.5 (적립식 지원)")
         self.geometry("1400x950")
         self.configure(bg=COLOR_BG)
 
         self.port_a = {}
         self.port_b = {}
-        self.start_var = tk.StringVar(value="2005-01-01")
+        self.start_var = tk.StringVar(value="2000-01-01")
         self.initial_var = tk.StringVar(value="300000000")
+        self.monthly_contrib_var = tk.StringVar(value="0")
         self.bench_var = tk.StringVar(value="SPY")
         self.rebalance_var = tk.StringVar(value="Monthly")
         self.currency_var = tk.StringVar(value="KRW")
@@ -66,6 +67,7 @@ class ProBacktestGUI(tk.Tk):
         sidebar = ttk.Frame(root)
         sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, 15))
 
+        # 1. Presets
         cp = ttk.Frame(sidebar, style="Card.TFrame", padding=15)
         cp.pack(fill="x", pady=(0, 15))
         ttk.Label(cp, text="Strategy Presets", style="Header.TLabel").pack(anchor="w", pady=(0, 10))
@@ -77,6 +79,7 @@ class ProBacktestGUI(tk.Tk):
         ttk.Button(btn_pf, text="Apply to A", command=lambda: self._apply_preset("A")).pack(side="left", fill="x", expand=True, padx=(0, 5))
         ttk.Button(btn_pf, text="Apply to B", command=lambda: self._apply_preset("B")).pack(side="left", fill="x", expand=True)
 
+        # 2. Asset Universe
         c1 = ttk.Frame(sidebar, style="Card.TFrame", padding=15)
         c1.pack(fill="both", expand=True, pady=(0, 15))
         ttk.Label(c1, text="Asset Universe (Drag to Ports)", style="Header.TLabel").pack(anchor="w", pady=(0, 10))
@@ -101,12 +104,13 @@ class ProBacktestGUI(tk.Tk):
         ttk.Entry(btn_f, textvariable=self.custom_ticker_var, width=8).pack(side="left")
         ttk.Button(btn_f, text="Add", width=5, command=self._add_custom).pack(side="left", padx=5)
 
+        # 3. Configuration Settings
         c2 = ttk.Frame(sidebar, style="Card.TFrame", padding=15)
         c2.pack(fill="x")
         ttk.Label(c2, text="Configuration", style="Header.TLabel").pack(anchor="w", pady=(0, 10))
         grid_f = ttk.Frame(c2, style="Card.TFrame")
         grid_f.pack(fill="x")
-        labels = [("Start Date", self.start_var), ("Benchmark", self.bench_var), ("Rebalancing", self.rebalance_var), ("Currency", self.currency_var)]
+        labels = [("Start Date", self.start_var), ("Initial Inv.", self.initial_var), ("Monthly Contrib.", self.monthly_contrib_var), ("Benchmark", self.bench_var), ("Rebalancing", self.rebalance_var), ("Currency", self.currency_var)]
         for i, (txt, var, vals) in enumerate([(l, v, (["SPY", "QQQ", "EWY", "VTI", "069500.KS"] if l=="Benchmark" else (["Monthly", "Quarterly", "Yearly", "None"] if l=="Rebalancing" else (["KRW", "USD"] if l=="Currency" else None)))) for l, v in labels]):
             ttk.Label(grid_f, text=txt, style="CardLabel.TLabel").grid(row=i, column=0, sticky="w", pady=5)
             if vals:
@@ -156,7 +160,6 @@ class ProBacktestGUI(tk.Tk):
         build_port_box(ports_f, "Portfolio B (Comparative)", "B").grid(row=0, column=1, sticky="nsew")
         ttk.Button(main_area, text="🚀 RUN LONG-TERM BACKTEST", style="Success.TButton", command=self._run).pack(fill="x", pady=(15, 0), ipady=12)
 
-    # --- LOGIC METHODS ---
     def _start_universe_drag(self, event):
         iid = self.asset_tree.identify_row(event.y)
         if iid: 
@@ -213,33 +216,18 @@ class ProBacktestGUI(tk.Tk):
         tree, edit, data, sum_lbl = (self.tree_a, self.edit_a, self.port_a, self.sum_a) if which == "A" else (self.tree_b, self.edit_b, self.port_b, self.sum_b)
         for i in tree.get_children(): tree.delete(i)
         for c in edit.winfo_children(): c.destroy()
-        
-        # 상단 Treeview와 동일한 컬럼 구조 (Ticker, Name, Weight)
-        edit.columnconfigure(0, minsize=70) # Ticker 컬럼
-        edit.columnconfigure(1, minsize=200) # Name 컬럼
-        edit.columnconfigure(2, minsize=60)  # Weight 컬럼
-        
-        # 1. 헤더 (생략 가능하나 가독성을 위해 유지)
+        edit.columnconfigure(0, minsize=70); edit.columnconfigure(1, minsize=200); edit.columnconfigure(2, minsize=60)
         ttk.Label(edit, text="Ticker", style="CardLabel.TLabel").grid(row=0, column=0, sticky="w", padx=5)
         ttk.Label(edit, text="Asset Name", style="CardLabel.TLabel").grid(row=0, column=1, sticky="w", padx=5)
         ttk.Label(edit, text="W(%)", style="CardLabel.TLabel").grid(row=0, column=2, sticky="e", padx=5)
-        
         total_w = 0
         for i, (t, w) in enumerate(data.items()):
-            full_name = backtest_proxy.get_asset_name(t)
-            short_name = full_name.split(' (')[0]
-            tree.insert("", "end", values=(t, short_name, f"{w*100:.1f}")); total_w += w
-            
-            # 1열: Ticker (중앙)
+            name = backtest_proxy.get_asset_name(t).split(' (')[0]
+            tree.insert("", "end", values=(t, name, f"{w*100:.1f}")); total_w += w
             ttk.Label(edit, text=t, style="CardLabel.TLabel").grid(row=i+1, column=0, sticky="w", padx=5)
-            # 2열: Asset Name (왼쪽)
-            ttk.Label(edit, text=short_name[:18], style="CardLabel.TLabel").grid(row=i+1, column=1, sticky="w", padx=5)
-            # 3열: Weight 입력창 (오른쪽 정렬, 상단 Treeview 비중 컬럼과 수직 정렬)
-            var = tk.StringVar(value=f"{w*100:.1f}")
-            ent = ttk.Entry(edit, textvariable=var, width=8, justify="right")
-            ent.grid(row=i+1, column=2, sticky="e", padx=5, pady=2)
-            var.trace_add("write", lambda *args, t=t, v=var, w=which: self._update_weight(w, t, v))
-        
+            ttk.Label(edit, text=name[:18], style="CardLabel.TLabel").grid(row=i+1, column=1, sticky="w", padx=5)
+            var = tk.StringVar(value=f"{w*100:.1f}"); ent = ttk.Entry(edit, textvariable=var, width=8, justify="right")
+            ent.grid(row=i+1, column=2, sticky="e", padx=5, pady=2); var.trace_add("write", lambda *args, t=t, v=var, w=which: self._update_weight(w, t, v))
         sum_lbl.config(text=f"Sum: {total_w*100:.1f}%")
     def _update_weight(self, which, ticker, var):
         try:
@@ -253,8 +241,8 @@ class ProBacktestGUI(tk.Tk):
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON files", "*.json")])
         if path:
             try:
-                with open(path, 'w', encoding='utf-8') as f:
-                    json.dump({"start": self.start_var.get(), "bench": self.bench_var.get(), "reb": self.rebalance_var.get(), "cur": self.currency_var.get(), "a": self.port_a, "b": self.port_b}, f, indent=4, ensure_ascii=False)
+                config = {"start": self.start_var.get(), "initial": self.initial_var.get(), "contrib": self.monthly_contrib_var.get(), "bench": self.bench_var.get(), "reb": self.rebalance_var.get(), "cur": self.currency_var.get(), "a": self.port_a, "b": self.port_b}
+                with open(path, 'w', encoding='utf-8') as f: json.dump(config, f, indent=4, ensure_ascii=False)
                 messagebox.showinfo("Success", "Saved.")
             except Exception as e: messagebox.showerror("Error", str(e))
     def _load_config(self):
@@ -262,7 +250,8 @@ class ProBacktestGUI(tk.Tk):
         if path:
             try:
                 with open(path, 'r', encoding='utf-8') as f: cfg = json.load(f)
-                self.start_var.set(cfg.get("start", "2005-01-01")); self.bench_var.set(cfg.get("bench", "SPY")); self.rebalance_var.set(cfg.get("reb", "Monthly")); self.currency_var.set(cfg.get("cur", "KRW"))
+                self.start_var.set(cfg.get("start", "2005-01-01")); self.initial_var.set(cfg.get("initial", "300000000")); self.monthly_contrib_var.set(cfg.get("contrib", "0"))
+                self.bench_var.set(cfg.get("bench", "SPY")); self.rebalance_var.set(cfg.get("reb", "Monthly")); self.currency_var.set(cfg.get("cur", "KRW"))
                 self.port_a, self.port_b = cfg.get("a", {}), cfg.get("b", {}); self._refresh_port_ui("A"); self._refresh_port_ui("B")
             except Exception as e: messagebox.showerror("Error", str(e))
     def _delete_asset(self, which):
@@ -277,7 +266,6 @@ class ProBacktestGUI(tk.Tk):
             eq = 1.0 / len(data)
             for t in data: data[t] = eq
             self._refresh_port_ui(which)
-
     def _reset_weights(self, which):
         data = self.port_a if which == "A" else self.port_b
         if data:
@@ -287,57 +275,70 @@ class ProBacktestGUI(tk.Tk):
     def _run(self):
         try:
             if not self.port_a or not self.port_b: raise ValueError("Both portfolios must have assets.")
-            if abs(sum(self.port_a.values()) - 1.0) > 0.05 or abs(sum(self.port_b.values()) - 1.0) > 0.05: raise ValueError("Weights must sum to 100% (±5% allowed).")
-            res = backtest_proxy.run_pro_backtest(self.port_a, self.port_b, start=self.start_var.get(), benchmark_ticker=self.bench_var.get(), rebalance=self.rebalance_var.get(), base_currency=self.currency_var.get())
+            if abs(sum(self.port_a.values()) - 1.0) > 0.05 or abs(sum(self.port_b.values()) - 1.0) > 0.05: raise ValueError("Weights must sum to 100%.")
+            res = backtest_proxy.run_pro_backtest(
+                self.port_a, self.port_b, 
+                start=self.start_var.get(), 
+                initial_investment=int(self.initial_var.get() or 300000000), 
+                benchmark_ticker=self.bench_var.get(), 
+                rebalance=self.rebalance_var.get(), 
+                base_currency=self.currency_var.get(),
+                monthly_contribution=float(self.monthly_contrib_var.get() or 0)
+            )
             self._show_results(res)
         except Exception as e: messagebox.showerror("Error", str(e))
 
     def _show_results(self, res):
-        win = tk.Toplevel(self); win.title("Professional Backtest Report"); win.geometry("1300x950"); win.configure(bg=COLOR_BG)
+        win = tk.Toplevel(self); win.title("Backtest Report"); win.geometry("1300x950"); win.configure(bg=COLOR_BG)
         top = ttk.Frame(win, padding=(20, 10)); top.pack(fill="x")
         curr = self.currency_var.get(); ttk.Label(top, text=f"Performance Analysis ({curr} Base)", font=FONT_TITLE).pack(side="left")
-        
         def export_excel():
             path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")])
             if path:
                 try:
                     with pd.ExcelWriter(path, engine='xlsxwriter') as writer:
+                        # 1. 요약 통계
                         res['metrics'].to_excel(writer, sheet_name='Summary')
+                        
+                        # --- 2. 포트폴리오 구성 시트 추가 ---
+                        for p_idx, p_data in [('A', self.port_a), ('B', self.port_b)]:
+                            comp_data = []
+                            for t, w in p_data.items():
+                                name = backtest_proxy.get_asset_name(t).split(' (')[0]
+                                comp_data.append({"Ticker": t, "Asset Name": name, "Weight (%)": w * 100})
+                            pd.DataFrame(comp_data).to_excel(writer, sheet_name=f'Composition_{p_idx}', index=False)
+
+                        # --- 3. 상세 가격 데이터 시트 (A & B) ---
                         for p_idx, p_data in [('A', self.port_a), ('B', self.port_b)]:
                             valid_tickers = [t for t in p_data.keys() if t in res['raw_returns'].columns]
-                            if valid_tickers:
-                                detail_dfs = []
-                                fx_data = res['raw_prices']['KRW=X'] if 'KRW=X' in res['raw_prices'].columns else pd.Series(1.0, index=res['raw_prices'].index)
-                                for t in valid_tickers:
-                                    t_df = pd.DataFrame(index=res['raw_returns'].index)
-                                    t_df[f'{t}_Market_Price'] = res['raw_prices'][t] if t in res['raw_prices'].columns else np.nan
-                                    t_df[f'Exchange_Rate'] = fx_data
-                                    t_df[f'{t}_Value_100M'] = (1 + res['raw_returns'][t]).cumprod() * 100_000_000
-                                    detail_dfs.append(t_df)
-                                pd.concat(detail_dfs, axis=1).to_excel(writer, sheet_name=f'Price_Detail_{p_idx}')
-                        res['monthly_a'].to_excel(writer, sheet_name='Monthly_A'); res['monthly_b'].to_excel(writer, sheet_name='Monthly_B')
-                        res['corr_a'].to_excel(writer, sheet_name='Corr_A'); res['corr_b'].to_excel(writer, sheet_name='Corr_B')
-                    messagebox.showinfo("Success", "Excel report saved.")
+                            if not valid_tickers: continue
+                            detail_dfs = []
+                            fx_data = res['raw_prices']['KRW=X'] if 'KRW=X' in res['raw_prices'].columns else pd.Series(1.0, index=res['raw_prices'].index)
+                            for t in valid_tickers:
+                                t_df = pd.DataFrame(index=res['raw_returns'].index); t_df[f'{t}_Market_Price'] = res['raw_prices'][t] if t in res['raw_prices'].columns else np.nan; t_df[f'Exchange_Rate'] = fx_data; t_df[f'{t}_Value_100M'] = (1 + res['raw_returns'][t]).cumprod() * 100_000_000
+                                detail_dfs.append(t_df)
+                            pd.concat(detail_dfs, axis=1).to_excel(writer, sheet_name=f'Price_Detail_{p_idx}')
+                        res['monthly_a'].to_excel(writer, sheet_name='Monthly_A'); res['monthly_b'].to_excel(writer, sheet_name='Monthly_B'); res['corr_a'].to_excel(writer, sheet_name='Corr_A'); res['corr_b'].to_excel(writer, sheet_name='Corr_B')
+                    messagebox.showinfo("Success", "Excel report with portfolio composition saved.")
                 except Exception as e: messagebox.showerror("Error", str(e))
-
         ttk.Button(top, text="📥 Export Excel", style="Success.TButton", command=export_excel).pack(side="right")
         nb = ttk.Notebook(win); nb.pack(fill="both", expand=True, padx=20, pady=10)
-
         def create_scroll_tab(notebook, title):
-            frame = ttk.Frame(notebook); notebook.add(frame, text=title)
+            frame = ttk.Frame(notebook)
+            notebook.add(frame, text=title)
             canvas = tk.Canvas(frame, bg=COLOR_BG, highlightthickness=0)
             scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
             scrollable_inner = ttk.Frame(canvas, style="Card.TFrame")
             
-            # 중앙 정렬을 위한 캔버스 설정 보강
-            def _on_canvas_configure(event):
-                canvas.coords(canvas_window, event.width / 2, 0)
-            
-            canvas.bind("<Configure>", _on_canvas_configure)
             scrollable_inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
             
-            # anchor="n" (중앙 상단)으로 윈도우 생성
-            canvas_window = canvas.create_window((650, 0), window=scrollable_inner, anchor="n")
+            canvas_window = canvas.create_window((0, 0), window=scrollable_inner, anchor="nw")
+
+            def _on_canvas_configure(event):
+                canvas.itemconfig(canvas_window, width=event.width)
+                canvas.coords(canvas_window, event.width / 2, 0) # Center the frame
+            
+            canvas.bind("<Configure>", _on_canvas_configure, add="+")
             
             canvas.configure(yscrollcommand=scrollbar.set)
             canvas.pack(side="left", fill="both", expand=True)
@@ -349,59 +350,82 @@ class ProBacktestGUI(tk.Tk):
             canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
             canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
             return scrollable_inner
-
-        # 모든 차트 크기 통일 및 확장
         UNIFIED_FIG = (15, 15)
-
+        
         # Tab 1: Stats
         t1_inner = create_scroll_tab(nb, "Performance Stats")
+        
+        # --- [추가] 포트폴리오 구성 요약 영역 ---
+        comp_frame = ttk.Frame(t1_inner, style="Card.TFrame")
+        comp_frame.pack(fill="x", padx=30, pady=(20, 0))
+        comp_frame.columnconfigure(0, weight=1)
+        comp_frame.columnconfigure(1, weight=1)
+        
+        def build_comp_mini_table(parent, title, data, col):
+            f = ttk.LabelFrame(parent, text=title, padding=10)
+            f.grid(row=0, column=col, sticky="nsew", padx=10)
+            t = ttk.Treeview(f, columns=("name", "weight"), show="headings", height=6)
+            t.heading("name", text="Asset Name")
+            t.heading("weight", text="Weight (%)")
+            t.column("name", width=180)
+            t.column("weight", width=80, anchor="center")
+            t.pack(fill="both", expand=True)
+            for ticker, weight in data.items():
+                name = backtest_proxy.get_asset_name(ticker).split(' (')[0]
+                t.insert("", "end", values=(name, f"{weight*100:.1f}%"))
+            return t
+
+        build_comp_mini_table(comp_frame, "Portfolio A Composition", self.port_a, 0)
+        build_comp_mini_table(comp_frame, "Portfolio B Composition", self.port_b, 1)
+        
+        # 성과 지표 테이블
+        ttk.Label(t1_inner, text="Key Performance Metrics", font=FONT_TITLE, background=COLOR_CARD).pack(pady=(30, 0))
         tree = ttk.Treeview(t1_inner, columns=("Metric", "Port A", "Port B", "Benchmark"), show="headings", height=15)
         for c in tree["columns"]: tree.heading(c, text=c); tree.column(c, anchor="center", width=250)
-        tree.pack(pady=30, padx=30, anchor="n"); 
+        tree.pack(pady=(10, 30), padx=30, anchor="n")
         for idx, row in res['metrics'].iterrows(): tree.insert("", "end", values=(idx, row['Port A'], row['Port B'], row['Benchmark']))
 
-        # Tab 2: Growth & Risk
+        # Tab 2: Equity & DD
         t2_inner = create_scroll_tab(nb, "Growth & Risk")
-        fig = Figure(figsize=UNIFIED_FIG); axs = fig.subplots(2, 1); bench = self.bench_var.get()
-        axs[0].plot(res['asset_values_a'], label="Port A", lw=3); axs[0].plot(res['asset_values_b'], label="Port B", lw=3); axs[0].plot(res['asset_values_bench'], label=f"Bench({bench})", ls="--", alpha=0.7)
-        axs[0].set_title(f"Cumulative Equity Growth ({curr})", fontsize=16, pad=30, fontweight='bold'); axs[0].legend(fontsize=12); axs[0].grid(True, ls=":", alpha=0.6)
-        axs[0].set_yscale('linear'); from matplotlib.ticker import FuncFormatter, MaxNLocator
-        axs[0].yaxis.set_major_formatter(FuncFormatter(lambda x, p: format(int(x), ','))); axs[0].yaxis.set_major_locator(MaxNLocator(nbins=12))
-        axs[1].fill_between(res['drawdown_a'].index, res['drawdown_a'], alpha=0.15); axs[1].plot(res['drawdown_a'], label="A DD"); axs[1].plot(res['drawdown_b'], label="B DD"); axs[1].plot(res['drawdown_bench'], label="Bench DD", ls="--"); axs[1].legend(fontsize=12); axs[1].grid(True, ls=":", alpha=0.6)
+        fig = Figure(figsize=UNIFIED_FIG)
+        axs = fig.subplots(2, 1)
+        bench = self.bench_var.get()
+        axs[0].plot(res['asset_values_a'], label="Port A", lw=3)
+        axs[0].plot(res['asset_values_b'], label="Port B", lw=3)
+        axs[0].plot(res['asset_values_bench'], label=f"Bench({bench})", ls="--", color="gray", alpha=0.7)
+        axs[0].set_title(f"Cumulative Equity Growth ({curr})", fontsize=16, pad=30, fontweight='bold')
+        axs[0].legend(fontsize=12); axs[0].grid(True, ls=":", alpha=0.6); axs[0].set_yscale('linear')
+        from matplotlib.ticker import FuncFormatter, MaxNLocator
+        axs[0].yaxis.set_major_formatter(FuncFormatter(lambda x, p: format(int(x), ',')))
+        axs[0].yaxis.set_major_locator(MaxNLocator(nbins=12))
+        axs[1].fill_between(res['drawdown_a'].index, res['drawdown_a'], alpha=0.15)
+        axs[1].plot(res['drawdown_a'], label="A DD")
+        axs[1].plot(res['drawdown_b'], label="B DD")
+        axs[1].plot(res['drawdown_bench'], label="Bench DD", ls="--")
+        axs[1].legend(fontsize=12); axs[1].grid(True, ls=":", alpha=0.6)
         axs[1].set_title("Drawdown Analysis (%)", fontsize=16, pad=30, fontweight='bold')
-        fig.tight_layout(pad=8.0); FigureCanvasTkAgg(fig, master=t2_inner).get_tk_widget().pack(fill="x", pady=20, anchor="n")
-
-        # Tab 3: Asset Correlation (가로 확장 및 중앙 정렬 강화)
-        t3_inner = create_scroll_tab(nb, "Asset Correlation")
-        fig_c = Figure(figsize=UNIFIED_FIG); axs_c = fig_c.subplots(2, 1)
+        fig.tight_layout(pad=8.0)
+        FigureCanvasTkAgg(fig, master=t2_inner).get_tk_widget().pack(fill="x", pady=20, anchor="n")
+        t3_inner = create_scroll_tab(nb, "Asset Correlation"); fig_c = Figure(figsize=UNIFIED_FIG); axs_c = fig_c.subplots(2, 1)
         def draw_corr(ax, df, title):
             if not df.empty:
-                # aspect='auto'를 적용하여 가로로 길게 확장 (Monthly Returns 탭과 동일한 설정)
-                im = ax.imshow(df.values, cmap='RdYlGn', vmin=-1, vmax=1, aspect='auto')
-                ax.set_title(title, pad=35, fontsize=16, fontweight='bold')
-                ax.set_xticks(range(len(df.columns))); ax.set_yticks(range(len(df.index)))
-                ax.set_xticklabels(df.columns, rotation=45, ha='right', fontsize=11); ax.set_yticklabels(df.index, fontsize=11)
+                im = ax.imshow(df.values, cmap='RdYlGn', vmin=-1, vmax=1, aspect='auto'); ax.set_title(title, pad=35, fontsize=16, fontweight='bold'); ax.set_xticks(range(len(df.columns))); ax.set_yticks(range(len(df.index))); ax.set_xticklabels(df.columns, rotation=45, ha='right', fontsize=11); ax.set_yticklabels(df.index, fontsize=11)
                 for i in range(len(df.index)):
                     for j in range(len(df.columns)): ax.text(j, i, f"{df.iloc[i,j]:.2f}", ha="center", va="center", fontsize=11, fontweight='bold')
                 fig_c.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        draw_corr(axs_c[0], res['corr_a'], "Portfolio A Asset Correlation"); draw_corr(axs_c[1], res['corr_b'], "Portfolio B Asset Correlation")
-        fig_c.tight_layout(pad=10.0); FigureCanvasTkAgg(fig_c, master=t3_inner).get_tk_widget().pack(fill="x", pady=20, anchor="n")
-
-        # Tab 4: Monthly Returns
-        t4_inner = create_scroll_tab(nb, "Monthly Returns")
-        fig_m = Figure(figsize=UNIFIED_FIG); axs_m = fig_m.subplots(2, 1)
+        draw_corr(axs_c[0], res['corr_a'], "Portfolio A Asset Correlation"); draw_corr(axs_c[1], res['corr_b'], "Portfolio B Asset Correlation"); fig_c.tight_layout(pad=10.0); FigureCanvasTkAgg(fig_c, master=t3_inner).get_tk_widget().pack(fill="x", pady=20, anchor="n")
+        t4_inner = create_scroll_tab(nb, "Monthly Returns"); fig_m = Figure(figsize=UNIFIED_FIG); axs_m = fig_m.subplots(2, 1)
         def draw_m(ax, df, title):
             if not df.empty:
-                im = ax.imshow(df.values, cmap='RdYlGn', vmin=-5, vmax=5, aspect='auto'); ax.set_title(title, pad=35, fontsize=16, fontweight='bold')
-                ax.set_yticks(range(len(df.index))); ax.set_yticklabels(df.index, fontsize=12); ax.set_xticks(range(len(df.columns))); ax.set_xticklabels([f"{m}M" for m in df.columns], fontsize=12)
+                im = ax.imshow(df.values, cmap='RdYlGn', vmin=-5, vmax=5, aspect='auto'); ax.set_title(title, pad=35, fontsize=16, fontweight='bold'); ax.set_yticks(range(len(df.index))); ax.set_yticklabels(df.index, fontsize=12); ax.set_xticks(range(len(df.columns))); ax.set_xticklabels([f"{m}M" for m in df.columns], fontsize=12)
                 for i in range(len(df.index)):
                     for j in range(len(df.columns)):
                         val = df.iloc[i, j]
                         if pd.notna(val):
-                            txt = ax.annotate(f"{float(val):.1f}", xy=(j, i), ha="center", va="center", color="black", fontsize=11, fontweight='bold')
-                            txt.set_path_effects([patheffects.withStroke(linewidth=2, foreground='white')])
+                            txt = ax.annotate(f"{float(val):.1f}", xy=(j, i), ha="center", va="center", color="black", fontsize=11, fontweight='bold'); txt.set_path_effects([patheffects.withStroke(linewidth=2, foreground='white')])
                 fig_m.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        draw_m(axs_m[0], res['monthly_a'], "Portfolio A Monthly Returns (%)"); draw_m(axs_m[1], res['monthly_b'], "Portfolio B Monthly Returns (%)")
-        fig_m.tight_layout(pad=10.0); FigureCanvasTkAgg(fig_m, master=t4_inner).get_tk_widget().pack(fill="x", pady=20, anchor="n")
+        draw_m(axs_m[0], res['monthly_a'], "Portfolio A Monthly Returns (%)"); draw_m(axs_m[1], res['monthly_b'], "Portfolio B Monthly Returns (%)"); fig_m.tight_layout(pad=10.0); FigureCanvasTkAgg(fig_m, master=t4_inner).get_tk_widget().pack(fill="x", pady=20, anchor="n")
 
-if __name__ == "__main__": ProBacktestGUI().mainloop()
+if __name__ == "__main__": 
+    app = ProBacktestGUI()
+    app.mainloop()
